@@ -44,7 +44,7 @@ def format_schedule_summary(result: ScheduleResult | None) -> str:
     if result is None:
         return "No valid schedule found."
     return "Schedule found!\nChosen enrollments: " + ", ".join(
-        _format_enrollment(enrollment) for enrollment in result.chosen_enrollments
+        format_enrollment_label(enrollment) for enrollment in result.chosen_enrollments
     )
 
 
@@ -60,15 +60,22 @@ def default_scrape_output_path() -> Path:
     return ARTIFACTS_DIR / "scraped_groups.json"
 
 
-def _format_enrollment(enrollment: CandidateEnrollment) -> str:
+def format_enrollment_label(
+    enrollment: CandidateEnrollment,
+    *,
+    include_subject_name: bool = False,
+) -> str:
     lab_codes = {
         session.lab_code
         for session in enrollment.sessions
         if session.session_type.lower() == "laboratory" and session.lab_code
     }
+    subject_label = enrollment.subject_id
+    if include_subject_name and enrollment.subject_name:
+        subject_label = f"{enrollment.subject_id} {enrollment.subject_name}"
     if lab_codes:
         return (
-            f"{enrollment.subject_id}:{enrollment.group_code} "
+            f"{subject_label}:{enrollment.group_code} "
             f"(Lab: {', '.join(sorted(lab_codes))})"
         )
-    return f"{enrollment.subject_id}:{enrollment.group_code}"
+    return f"{subject_label}:{enrollment.group_code}"

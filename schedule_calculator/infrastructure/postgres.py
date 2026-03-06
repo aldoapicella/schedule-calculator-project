@@ -40,6 +40,7 @@ class PostgresGroupCatalogRepository:
         query = """
         SELECT cg.group_code,
                cg.province,
+               subj.name,
                cc.session_type,
                cc.lab_code,
                s.day,
@@ -48,6 +49,7 @@ class PostgresGroupCatalogRepository:
                cs.classroom
         FROM course_class cc
         JOIN course_group cg ON cc.group_code = cg.group_code
+        JOIN course_subject subj ON cc.subject_id = subj.subject_id
         JOIN class_schedule cs ON cc.id_class = cs.id_class
         JOIN schedule s ON cs.id_schedule = s.id_schedule
         WHERE cc.subject_id = %s
@@ -67,6 +69,7 @@ class PostgresGroupCatalogRepository:
             (
                 group_code,
                 province,
+                subject_name,
                 session_type,
                 lab_code,
                 day,
@@ -80,6 +83,7 @@ class PostgresGroupCatalogRepository:
                     subject_id=subject_id,
                     province=province,
                     sessions=[],
+                    subject_name=subject_name or "",
                 )
             groups[group_code].sessions.append(
                 SessionRecord(

@@ -164,6 +164,7 @@ class CourseGroup:
     subject_id: str
     province: str
     sessions: list[SessionRecord]
+    subject_name: str = ""
 
 
 @dataclass(slots=True)
@@ -172,6 +173,7 @@ class CandidateEnrollment:
     subject_id: str
     province: str
     sessions: list[SessionRecord]
+    subject_name: str = ""
 
 
 @dataclass(slots=True)
@@ -188,4 +190,3 @@ class ScheduleResult:
     chosen_enrollments: list[CandidateEnrollment]
     final_schedule: list[SessionRecord]
     total_idle_minutes: int
-

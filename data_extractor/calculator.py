@@ -11,6 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from schedule_calculator.application.scheduler import SchedulerService
+from schedule_calculator.calendar_view import build_schedule_calendar_view
 from schedule_calculator.domain.models import ScheduleRequest
 from schedule_calculator.errors import ConfigurationError, ScheduleCalculatorError
 from schedule_calculator.formatters import format_schedule_summary
@@ -20,6 +21,7 @@ from schedule_calculator.infrastructure.postgres import (
     PostgresGroupCatalogRepository,
     postgres_connection,
 )
+from schedule_calculator.pdf_renderer import render_schedule_calendar_pdf
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,6 +48,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Desired province for physical classes.",
     )
     parser.add_argument(
+        "--pdf-output",
+        default=None,
+        help="Optional output path for a calendar PDF.",
+    )
+    parser.add_argument(
         "--log-file",
         default=None,
         help="Optional log file path.",
@@ -69,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging(args.log_file, verbose=args.verbose)
     logger = logging.getLogger(__name__)
+    pdf_path: Path | None = None
     try:
         database_config = load_database_config(args.env_file)
         request = ScheduleRequest(
@@ -82,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         with postgres_connection(database_config) as connection:
             service = SchedulerService(PostgresGroupCatalogRepository(connection))
             result = service.find_best_schedule(request)
+        if result is not None and args.pdf_output:
+            calendar_view = build_schedule_calendar_view(request, result)
+            pdf_path = render_schedule_calendar_pdf(calendar_view, args.pdf_output)
     except (ConfigurationError, ValueError) as exc:
         log_exception_summary(logger, exc, verbose=args.verbose)
         print(f"Error: {exc}", file=sys.stderr)
@@ -96,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(format_schedule_summary(result))
+    if pdf_path is not None:
+        print(f"PDF saved to {pdf_path}")
     return 0
 
 

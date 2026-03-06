@@ -19,6 +19,7 @@ Python dependencies are not pinned in this repo yet, but the runtime expects:
 - `requests`
 - `beautifulsoup4`
 - `psycopg2`
+- `reportlab` for `--pdf-output` calendar export
 
 The database stack is provided by Docker Compose:
 
@@ -39,6 +40,12 @@ cp .env.example.docker .env
 ```
 
 Host mode is for running the Python scripts directly on your machine. Docker mode is for running them inside a container network where Postgres resolves as `postgres`.
+
+For PDF export support, install:
+
+```bash
+python3 -m pip install reportlab
+```
 
 ## Commands
 
@@ -62,7 +69,8 @@ python data_extractor/calculator.py \
   --required-subjects 0760 \
   --available-start 17:00 \
   --available-end 23:00 \
-  --province PANAMÁ
+  --province PANAMÁ \
+  --pdf-output artifacts/schedule.pdf
 ```
 
 All entrypoints support:
@@ -72,6 +80,7 @@ All entrypoints support:
 - `--verbose` to enable debug logging
 
 The scraper also supports `--group-concurrency <int>` to fetch group detail pages in parallel per subject. The default is `6`, which keeps subject traversal stable while removing the main serial bottleneck.
+The calculator also supports `--pdf-output <path>` to export the chosen schedule as a weekly calendar PDF.
 
 By default, generated scraper output goes to `artifacts/scraped_groups.json`. No log file is created unless `--log-file` is passed.
 

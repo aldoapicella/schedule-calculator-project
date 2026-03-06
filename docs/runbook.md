@@ -13,7 +13,7 @@ cp .env.example.host .env
 docker compose up -d
 python scrape_utp.py --subject-ids 0698,0709 --group-concurrency 6
 python data_extractor/inserter.py --input artifacts/scraped_groups.json
-python data_extractor/calculator.py --subjects 0698,0709 --available-start 17:00 --available-end 23:00 --province PANAMÁ
+python data_extractor/calculator.py --subjects 0698,0709 --available-start 17:00 --available-end 23:00 --province PANAMÁ --pdf-output artifacts/schedule.pdf
 ```
 
 ### Docker-network mode
@@ -32,6 +32,7 @@ Generated runtime output should live under `artifacts/`.
 Expected artifacts:
 
 - `artifacts/scraped_groups.json`
+- `artifacts/schedule.pdf` when `--pdf-output` is used
 - optional custom log files when `--log-file` is passed
 
 Tracked scratch files such as `data_extractor/data.json` and `data_extractor/schedule.log` are intentionally removed from the repo.
@@ -50,6 +51,7 @@ Logging:
 - `--verbose`: enables DEBUG logging
 - `--log-file`: writes logs to an explicit file path
 - scraper `--group-concurrency`: fetches group detail pages in parallel per subject, default `6`
+- calculator `--pdf-output`: writes a weekly calendar PDF for the chosen schedule
 
 ## Failure Modes
 
@@ -109,6 +111,7 @@ Action:
 - confirm CLI arguments
 - confirm the database is populated
 - use `--verbose` to inspect rejection reasons
+- install `reportlab` if PDF export is requested
 
 ## Operational Notes
 
@@ -116,3 +119,4 @@ Action:
 - The scheduler now optimizes search order internally by exploring subjects with fewer candidate enrollments first, but the final output preserves the original user subject order.
 - The portal adapter retries transient request failures with small backoff before surfacing a request error.
 - The scraper keeps subjects sequential for portal stability, but group detail pages within each subject are fetched with bounded parallelism to reduce live scrape time without changing output order.
+- PDF export is opt-in and depends on `reportlab`. Normal calculator runs do not require it.

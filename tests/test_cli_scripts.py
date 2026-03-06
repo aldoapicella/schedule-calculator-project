@@ -64,6 +64,15 @@ class CliScriptTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertIn("--group-concurrency", completed.stdout)
 
+    def test_calculator_help_output_exposes_pdf_output_flag(self) -> None:
+        completed = self._run_script(
+            PROJECT_ROOT / "data_extractor" / "calculator.py",
+            ["--help"],
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("--pdf-output", completed.stdout)
+
     def test_scraper_rejects_non_positive_group_concurrency(self) -> None:
         completed = self._run_script(
             PROJECT_ROOT / "scrape_utp.py",
