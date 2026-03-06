@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from contextlib import contextmanager
 from typing import Iterator
 
 from schedule_calculator.domain.models import CourseGroup, ScrapedGroup, SessionRecord
 from schedule_calculator.domain.rules import normalize_subject, parse_time_slot
+from schedule_calculator.errors import ConfigurationError, PersistenceError
 from schedule_calculator.infrastructure.config import DatabaseConfig
 
 
@@ -13,11 +13,14 @@ def connect_postgres(config: DatabaseConfig):
     try:
         import psycopg2
     except ModuleNotFoundError as exc:
-        raise RuntimeError(
+        raise ConfigurationError(
             "psycopg2 is not installed. Install it to use the Postgres adapters."
         ) from exc
 
-    return psycopg2.connect(config.dsn)
+    try:
+        return psycopg2.connect(config.dsn)
+    except Exception as exc:
+        raise PersistenceError("Failed to connect to Postgres.") from exc
 
 
 @contextmanager
@@ -50,9 +53,14 @@ class PostgresGroupCatalogRepository:
         WHERE cc.subject_id = %s
         ORDER BY cg.group_code, s.day, s.start_time;
         """
-        with self.connection.cursor() as cursor:
-            cursor.execute(query, (subject_id,))
-            rows = cursor.fetchall()
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(query, (subject_id,))
+                rows = cursor.fetchall()
+        except Exception as exc:
+            raise PersistenceError(
+                f"Failed to load candidate groups for subject {subject_id}."
+            ) from exc
 
         groups: dict[str, CourseGroup] = {}
         for row in rows:
@@ -92,12 +100,15 @@ class PostgresGroupPersistenceRepository:
         self.connection = connection
 
     def is_group_processed(self, group_code: str) -> bool:
-        with self.connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT COUNT(*) FROM process_history WHERE group_code = %s",
-                (group_code,),
-            )
-            return cursor.fetchone()[0] > 0
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM process_history WHERE group_code = %s",
+                    (group_code,),
+                )
+                return cursor.fetchone()[0] > 0
+        except Exception as exc:
+            raise PersistenceError("Failed to query process history.") from exc
 
     def persist_group(self, group: ScrapedGroup) -> None:
         try:
@@ -161,9 +172,11 @@ class PostgresGroupPersistenceRepository:
                 )
 
             self.connection.commit()
-        except Exception:
+        except Exception as exc:
             self.connection.rollback()
-            raise
+            raise PersistenceError(
+                f"Database write failed for group {group.header.group_code}."
+            ) from exc
 
     def _get_or_create_faculty(self, cursor, faculty_name: str) -> int:
         normalized_name = faculty_name.strip()
@@ -250,4 +263,3 @@ class PostgresGroupPersistenceRepository:
             (day, start_time, end_time),
         )
         return cursor.fetchone()[0]
-

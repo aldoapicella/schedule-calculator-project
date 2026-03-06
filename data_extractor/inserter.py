@@ -10,9 +10,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from schedule_calculator.application.importer import ImportService
+from schedule_calculator.errors import ConfigurationError, ScheduleCalculatorError
 from schedule_calculator.formatters import format_import_summary, read_scraped_groups
 from schedule_calculator.infrastructure.config import load_database_config
-from schedule_calculator.infrastructure.logging import configure_logging
+from schedule_calculator.infrastructure.logging import configure_logging, log_exception_summary
 from schedule_calculator.infrastructure.postgres import (
     PostgresGroupPersistenceRepository,
     postgres_connection,
@@ -24,13 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", required=True, help="Path to the scraper JSON payload.")
     parser.add_argument(
         "--log-file",
-        default="insertion.log",
+        default=None,
         help="Optional log file path.",
     )
     parser.add_argument(
         "--env-file",
         default=None,
         help="Optional path to a .env file.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug logging.",
     )
     return parser
 
@@ -39,13 +45,27 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    configure_logging(args.log_file, level=logging.INFO)
-    groups = read_scraped_groups(args.input)
-    database_config = load_database_config(args.env_file)
+    configure_logging(args.log_file, verbose=args.verbose)
+    logger = logging.getLogger(__name__)
+    try:
+        groups = read_scraped_groups(args.input)
+        database_config = load_database_config(args.env_file)
 
-    with postgres_connection(database_config) as connection:
-        service = ImportService(PostgresGroupPersistenceRepository(connection))
-        result = service.import_groups(groups)
+        with postgres_connection(database_config) as connection:
+            service = ImportService(PostgresGroupPersistenceRepository(connection), logger=logger)
+            result = service.import_groups(groups)
+    except ConfigurationError as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except ScheduleCalculatorError as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print("Error: unexpected importer failure.", file=sys.stderr)
+        return 1
 
     print(format_import_summary(result))
     return 0 if result.failed_count == 0 else 1

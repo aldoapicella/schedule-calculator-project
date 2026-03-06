@@ -12,9 +12,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from schedule_calculator.application.scheduler import SchedulerService
 from schedule_calculator.domain.models import ScheduleRequest
+from schedule_calculator.errors import ConfigurationError, ScheduleCalculatorError
 from schedule_calculator.formatters import format_schedule_summary
 from schedule_calculator.infrastructure.config import load_database_config
-from schedule_calculator.infrastructure.logging import configure_logging
+from schedule_calculator.infrastructure.logging import configure_logging, log_exception_summary
 from schedule_calculator.infrastructure.postgres import (
     PostgresGroupCatalogRepository,
     postgres_connection,
@@ -46,13 +47,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--log-file",
-        default="schedule.log",
+        default=None,
         help="Optional log file path.",
     )
     parser.add_argument(
         "--env-file",
         default=None,
         help="Optional path to a .env file.",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose debug logging.",
     )
     return parser
 
@@ -61,42 +67,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    configure_logging(args.log_file, level=logging.DEBUG)
-    database_config = load_database_config(args.env_file)
-    request = ScheduleRequest(
-        desired_subjects=_parse_csv(args.subjects),
-        required_subjects=_parse_csv(args.required_subjects),
-        available_start=_parse_time(args.available_start),
-        available_end=_parse_time(args.available_end),
-        desired_province=args.province.strip(),
-    )
-
-    with postgres_connection(database_config) as connection:
-        service = SchedulerService(PostgresGroupCatalogRepository(connection))
-        result = service.find_best_schedule(request)
-
-    if result is not None:
-        logging.info("Schedule found!")
-        logging.info(
-            "Chosen enrollments: %s",
-            ", ".join(
-                f"{enrollment.subject_id}:{enrollment.group_code}"
-                for enrollment in result.chosen_enrollments
-            ),
+    configure_logging(args.log_file, verbose=args.verbose)
+    logger = logging.getLogger(__name__)
+    try:
+        database_config = load_database_config(args.env_file)
+        request = ScheduleRequest(
+            desired_subjects=_parse_csv(args.subjects),
+            required_subjects=_parse_csv(args.required_subjects),
+            available_start=_parse_time(args.available_start),
+            available_end=_parse_time(args.available_end),
+            desired_province=args.province.strip(),
         )
-        for session in result.final_schedule:
-            start_time = session.start_time.strftime("%H:%M") if session.start_time else "?"
-            end_time = session.end_time.strftime("%H:%M") if session.end_time else "?"
-            logging.info(
-                "%s %s - %s in %s (%s)",
-                session.day,
-                start_time,
-                end_time,
-                session.classroom,
-                session.session_type,
-            )
-    else:
-        logging.info("No valid schedule found.")
+
+        with postgres_connection(database_config) as connection:
+            service = SchedulerService(PostgresGroupCatalogRepository(connection))
+            result = service.find_best_schedule(request)
+    except (ConfigurationError, ValueError) as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    except ScheduleCalculatorError as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        log_exception_summary(logger, exc, verbose=args.verbose)
+        print("Error: unexpected calculator failure.", file=sys.stderr)
+        return 1
 
     print(format_schedule_summary(result))
     return 0

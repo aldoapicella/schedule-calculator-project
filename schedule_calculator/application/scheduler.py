@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+from typing import Any
 
 from schedule_calculator.application.interfaces import GroupCatalogRepository
 from schedule_calculator.domain.models import ScheduleRequest, ScheduleResult
@@ -29,9 +30,12 @@ class SchedulerService:
 
     def find_best_schedule(self, request: ScheduleRequest) -> ScheduleResult | None:
         desired_subjects = [subject for subject in unique_preserve_order(request.desired_subjects) if subject]
+        if not desired_subjects:
+            return None
         required_subjects = set(subject for subject in request.required_subjects if subject)
+        subject_order = {subject: index for index, subject in enumerate(desired_subjects)}
 
-        groups_by_subject = {}
+        groups_by_subject: dict[str, list[Any]] = {}
         for subject_id in desired_subjects:
             candidate_groups = self.repository.list_groups_for_subject(subject_id)
             filtered_groups = []
@@ -71,12 +75,31 @@ class SchedulerService:
                 len(enrollments),
             )
 
+        missing_required_subjects = [
+            subject_id for subject_id in required_subjects if not groups_by_subject.get(subject_id)
+        ]
+        if missing_required_subjects:
+            self.logger.warning(
+                "Required subjects have no valid candidate enrollments: %s",
+                ", ".join(sorted(missing_required_subjects)),
+            )
+            return None
+
+        search_subjects = sorted(
+            desired_subjects,
+            key=lambda subject_id: (len(groups_by_subject.get(subject_id, [])), subject_order[subject_id]),
+        )
+
         best_solution: ScheduleResult | None = None
         best_subject_count = 0
         best_idle: int | None = None
 
         def backtrack(index: int, current_sessions, chosen_enrollments) -> None:
             nonlocal best_solution, best_subject_count, best_idle
+            remaining_subjects = len(search_subjects) - index
+            if len(chosen_enrollments) + remaining_subjects < max(2, best_subject_count):
+                return
+
             enrollment_str = ", ".join(
                 f"{enrollment.subject_id}:{enrollment.group_code}"
                 for enrollment in chosen_enrollments
@@ -107,10 +130,14 @@ class SchedulerService:
                             and (best_idle is None or current_idle < best_idle)
                         )
                     ):
+                        ordered_enrollments = sorted(
+                            copy.deepcopy(chosen_enrollments),
+                            key=lambda enrollment: subject_order.get(enrollment.subject_id, len(subject_order)),
+                        )
                         best_subject_count = len(chosen_enrollments)
                         best_idle = current_idle
                         best_solution = ScheduleResult(
-                            chosen_enrollments=copy.deepcopy(chosen_enrollments),
+                            chosen_enrollments=ordered_enrollments,
                             final_schedule=copy.deepcopy(current_sessions),
                             total_idle_minutes=current_idle,
                         )
@@ -121,18 +148,22 @@ class SchedulerService:
                             enrollment_str,
                         )
 
-            if index >= len(desired_subjects):
+            if index >= len(search_subjects):
                 return
 
-            subject_id = desired_subjects[index]
+            subject_id = search_subjects[index]
             for enrollment in groups_by_subject.get(subject_id, []):
                 new_sessions = current_sessions + enrollment.sessions
                 if sessions_conflict(new_sessions):
                     self.logger.info(
-                        "Combination rejected: Adding enrollment %s for subject %s causes "
-                        "conflicts: %s. Skipping.",
+                        "Combination rejected: enrollment %s for subject %s conflicts with the current schedule.",
                         enrollment.group_code,
                         subject_id,
+                    )
+                    self.logger.debug(
+                        "Conflict details for subject %s enrollment %s: %s",
+                        subject_id,
+                        enrollment.group_code,
                         get_conflict_details(new_sessions),
                     )
                     continue
@@ -140,10 +171,14 @@ class SchedulerService:
                     new_sessions, request.available_start, request.available_end
                 ):
                     self.logger.info(
-                        "Combination rejected: Adding enrollment %s for subject %s places "
-                        "sessions outside available hours: %s. Skipping.",
+                        "Combination rejected: enrollment %s for subject %s is outside available hours.",
                         enrollment.group_code,
                         subject_id,
+                    )
+                    self.logger.debug(
+                        "Availability violations for subject %s enrollment %s: %s",
+                        subject_id,
+                        enrollment.group_code,
                         get_available_violations(
                             new_sessions,
                             request.available_start,
@@ -159,4 +194,3 @@ class SchedulerService:
 
         backtrack(0, [], [])
         return best_solution
-

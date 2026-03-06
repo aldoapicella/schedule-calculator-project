@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
-from urllib.parse import urljoin
+import logging
+import time
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -16,6 +17,7 @@ from schedule_calculator.domain.models import (
     SubjectProfessor,
 )
 from schedule_calculator.domain.rules import extract_lab_code
+from schedule_calculator.errors import PortalParseError, PortalRequestError
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -35,7 +37,7 @@ def parse_portal_state(html: str, form_id: str) -> PortalSessionState:
     soup = BeautifulSoup(html, "html.parser")
     form = soup.find("form", {"id": form_id})
     if form is None:
-        raise ValueError(f"Unable to find form '{form_id}'.")
+        raise PortalParseError(f"Unable to find form '{form_id}'.")
 
     inputs = {
         input_tag.get("name", ""): input_tag.get("value", "")
@@ -84,7 +86,7 @@ def extract_group_list_url(html: str, base_url: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     group_list_link = soup.find("a", {"id": "mListag"})
     if group_list_link is None or not group_list_link.get("href"):
-        raise ValueError("Unable to find group list link.")
+        raise PortalParseError("Unable to find group list link.")
     href = group_list_link["href"].replace("../../../../", "")
     return urljoin(base_url, href).replace(".aspx", "")
 
@@ -106,7 +108,10 @@ def parse_group_rows(html: str) -> list[GroupListing]:
         href = horario_link.get("href", "")
         if "javascript:__doPostBack" not in href:
             continue
-        groups.append(GroupListing(event_target=href.split("'")[1]))
+        parts = href.split("'")
+        if len(parts) < 2:
+            continue
+        groups.append(GroupListing(event_target=parts[1]))
     return groups
 
 
@@ -125,16 +130,21 @@ class UTPPortalClient:
         base_url: str,
         session: requests.Session | None = None,
         timeout: int = 30,
+        logger: logging.Logger | None = None,
+        max_attempts: int = 3,
+        backoff_seconds: float = 0.2,
     ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self.session = session or requests.Session()
         self.session.headers.update(DEFAULT_HEADERS)
         self.timeout = timeout
+        self.logger = logger or logging.getLogger(__name__)
+        self.max_attempts = max_attempts
+        self.backoff_seconds = backoff_seconds
         self.group_list_url: str | None = None
 
     def authenticate(self, credentials: PortalCredentials) -> None:
-        login_response = self.session.get(self.base_url, timeout=self.timeout)
-        login_response.raise_for_status()
+        login_response = self._request("get", self.base_url)
         login_state = parse_portal_state(login_response.text, "ctl01")
 
         login_url = self._build_action_url("Session/Cuenta/Validar", login_state.action)
@@ -151,17 +161,16 @@ class UTPPortalClient:
             }
         )
 
-        profile_response = self.session.post(
+        profile_response = self._request(
+            "post",
             login_url,
             data=login_payload,
-            timeout=self.timeout,
         )
-        profile_response.raise_for_status()
         profile_state = parse_portal_state(profile_response.text, "ctl01")
         profile_options = parse_profile_options(profile_response.text)
 
         if credentials.profile_label not in profile_options:
-            raise ValueError(
+            raise PortalParseError(
                 f"Profile '{credentials.profile_label}' not found. Available: {sorted(profile_options)}"
             )
 
@@ -174,20 +183,18 @@ class UTPPortalClient:
                 "ctl00$MainContent$rblPerfiles": profile_options[credentials.profile_label],
             }
         )
-        dashboard_response = self.session.post(
+        dashboard_response = self._request(
+            "post",
             profile_url,
             data=profile_payload,
-            timeout=self.timeout,
         )
-        dashboard_response.raise_for_status()
         self.group_list_url = extract_group_list_url(dashboard_response.text, self.base_url)
 
     def fetch_groups_for_subject(self, subject_id: str) -> list[ScrapedGroup]:
         if not self.group_list_url:
-            raise RuntimeError("Portal client is not authenticated.")
+            raise PortalRequestError("Portal client is not authenticated.")
 
-        selection_response = self.session.get(self.group_list_url, timeout=self.timeout)
-        selection_response.raise_for_status()
+        selection_response = self._request("get", self.group_list_url)
         selection_state = parse_portal_state(selection_response.text, "frmMaster")
 
         subject_payload = selection_state.as_payload()
@@ -199,12 +206,11 @@ class UTPPortalClient:
                 "ctl00$cphContenido$ddlasignaturas": subject_id,
             }
         )
-        groups_response = self.session.post(
+        groups_response = self._request(
+            "post",
             self.group_list_url,
             data=subject_payload,
-            timeout=self.timeout,
         )
-        groups_response.raise_for_status()
         groups_state = parse_portal_state(groups_response.text, "frmMaster")
         group_listings = parse_group_rows(groups_response.text)
 
@@ -217,18 +223,54 @@ class UTPPortalClient:
                     "__EVENTARGUMENT": "",
                 }
             )
-            detail_response = self.session.post(
+            detail_response = self._request(
+                "post",
                 self.group_list_url,
                 data=detail_payload,
-                timeout=self.timeout,
             )
-            detail_response.raise_for_status()
             scraped_groups.append(parse_group_detail_html(detail_response.text))
         return scraped_groups
 
     def _build_action_url(self, prefix: str, action: str) -> str:
+        if not action:
+            raise PortalParseError("Portal form action is missing.")
+        if action.startswith(("http://", "https://")):
+            return action
         action_fragment = action.lstrip("./")
         return urljoin(self.base_url, f"{prefix}/{action_fragment}")
+
+    def _request(self, method: str, url: str, **kwargs):
+        last_error: Exception | None = None
+        redacted_url = self._redact_url(url)
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                response = getattr(self.session, method)(url, timeout=self.timeout, **kwargs)
+                response.raise_for_status()
+                return response
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt == self.max_attempts:
+                    break
+                self.logger.warning(
+                    "Portal request failed, retrying attempt %s/%s for %s %s.",
+                    attempt,
+                    self.max_attempts,
+                    method.upper(),
+                    redacted_url,
+                )
+                if self.backoff_seconds > 0:
+                    time.sleep(self.backoff_seconds * attempt)
+        raise PortalRequestError(
+            f"Portal request failed after {self.max_attempts} attempts: "
+            f"{method.upper()} {redacted_url}"
+        ) from last_error
+
+    def _redact_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        if parsed.scheme and parsed.netloc:
+            path = parsed.path or "/"
+            return f"{parsed.scheme}://{parsed.netloc}{path}"
+        return parsed.path or "/"
 
 
 def _parse_group_header(soup: BeautifulSoup) -> GroupHeader:

@@ -81,7 +81,7 @@ def session_time_bounds(session: SessionRecord) -> tuple[time, time]:
         return session.start_time, session.end_time
     if session.time_slot:
         return parse_time_slot(session.time_slot)
-    raise ValueError(f"Session is missing time data: {session}")
+    raise ValueError("Session is missing time data.")
 
 
 def sessions_conflict(sessions: Sequence[SessionRecord]) -> bool:

@@ -4,8 +4,10 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 from schedule_calculator.domain.models import PortalCredentials
+from schedule_calculator.errors import ConfigurationError
 
 ENV_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
@@ -16,21 +18,17 @@ class DatabaseConfig:
 
 
 def load_environment(env_path: str | Path | None = None) -> dict[str, str]:
-    path = Path(env_path) if env_path else Path(__file__).resolve().parents[2] / ".env"
-    raw_values: dict[str, str] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            raw_values[key.strip()] = value.strip()
-
-    resolution_context = {**raw_values, **os.environ}
-    resolved_values = {
-        key: _expand_value(value, resolution_context) for key, value in raw_values.items()
-    }
-    return {**resolved_values, **os.environ}
+    repo_root = Path(__file__).resolve().parents[2]
+    environment = dict(os.environ)
+    local_env_path = repo_root / ".env"
+    if local_env_path.exists():
+        environment.update(_load_env_file(local_env_path, environment))
+    if env_path is not None:
+        explicit_env_path = Path(env_path)
+        if not explicit_env_path.exists():
+            raise ConfigurationError(f"Environment file not found: {explicit_env_path}")
+        environment.update(_load_env_file(explicit_env_path, environment))
+    return environment
 
 
 def load_database_config(env_path: str | Path | None = None) -> DatabaseConfig:
@@ -46,12 +44,14 @@ def load_database_config(env_path: str | Path | None = None) -> DatabaseConfig:
     port = env.get("POSTGRES_PORT", "5432").strip() or "5432"
 
     if not user or not database:
-        raise ValueError(
+        raise ConfigurationError(
             "Database configuration is missing. Set POSTGRES_URI or "
             "POSTGRES_USER/POSTGRES_PASSWORD/POSTGRES_DB."
         )
 
-    return DatabaseConfig(dsn=f"postgresql://{user}:{password}@{host}:{port}/{database}")
+    return DatabaseConfig(
+        dsn=f"postgresql://{quote(user)}:{quote(password)}@{host}:{port}/{quote(database)}"
+    )
 
 
 def load_portal_credentials(env_path: str | Path | None = None) -> PortalCredentials:
@@ -60,7 +60,9 @@ def load_portal_credentials(env_path: str | Path | None = None) -> PortalCredent
     password = env.get("UTP_PASSWORD", "").strip()
     profile_label = env.get("UTP_PROFILE_LABEL", "Estudiantes").strip() or "Estudiantes"
     if not username or not password:
-        raise ValueError("Portal credentials are missing. Set UTP_USERNAME and UTP_PASSWORD.")
+        raise ConfigurationError(
+            "Portal credentials are missing. Set UTP_USERNAME and UTP_PASSWORD."
+        )
     return PortalCredentials(username=username, password=password, profile_label=profile_label)
 
 
@@ -78,3 +80,18 @@ def _expand_value(value: str, context: dict[str, str]) -> str:
         expanded = replacement
     return expanded
 
+
+def _load_env_file(path: Path, base_context: dict[str, str]) -> dict[str, str]:
+    raw_values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        raw_values[key.strip()] = value.strip()
+
+    resolution_context = {**base_context, **raw_values}
+    return {
+        key: _expand_value(value, resolution_context)
+        for key, value in raw_values.items()
+    }

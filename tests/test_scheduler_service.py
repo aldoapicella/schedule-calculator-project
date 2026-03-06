@@ -200,6 +200,39 @@ class SchedulerServiceTests(unittest.TestCase):
         self.assertEqual(chosen_phy, "GPHY1")
         self.assertEqual(result.total_idle_minutes, 240)
 
+    def test_optimized_candidate_order_does_not_change_output_subject_order(self) -> None:
+        repository = FakeCatalogRepository(
+            {
+                "MAT": [
+                    self._group("GMAT1", "MAT", "PANAMÁ", [self._session("MONDAY", 17, 0, 18, 0)]),
+                    self._group("GMAT2", "MAT", "PANAMÁ", [self._session("MONDAY", 18, 0, 19, 0)]),
+                ],
+                "PHY": [
+                    self._group("GPHY", "PHY", "PANAMÁ", [self._session("TUESDAY", 17, 0, 18, 0)])
+                ],
+                "CHEM": [
+                    self._group("GCHEM", "CHEM", "PANAMÁ", [self._session("WEDNESDAY", 17, 0, 18, 0)])
+                ],
+            }
+        )
+        service = SchedulerService(repository)
+
+        result = service.find_best_schedule(
+            ScheduleRequest(
+                desired_subjects=["MAT", "PHY", "CHEM"],
+                required_subjects=[],
+                available_start=time(17, 0),
+                available_end=time(23, 0),
+                desired_province="PANAMÁ",
+            )
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(
+            [enrollment.subject_id for enrollment in result.chosen_enrollments],
+            ["MAT", "PHY", "CHEM"],
+        )
+
     @staticmethod
     def _group(
         group_code: str,
