@@ -76,8 +76,20 @@ class CalendarViewTests(unittest.TestCase):
 
     def test_build_schedule_calendar_view_uses_stable_legend_order_and_subject_colors(self) -> None:
         result = self._result(
-            self._enrollment("PHY", "GPHY", [self._session("TUESDAY", 18, 0, 18, 45)], subject_name="Physics"),
-            self._enrollment("MAT", "GMAT", [self._session("MONDAY", 17, 0, 17, 45)], subject_name="Mathematics"),
+            self._enrollment(
+                "PHY",
+                "GPHY",
+                [self._session("TUESDAY", 18, 0, 18, 45)],
+                subject_name="Physics",
+                hour_code="801",
+            ),
+            self._enrollment(
+                "MAT",
+                "GMAT",
+                [self._session("MONDAY", 17, 0, 17, 45)],
+                subject_name="Mathematics",
+                hour_code="800",
+            ),
         )
 
         view = build_schedule_calendar_view(self._request(), result)
@@ -91,8 +103,8 @@ class CalendarViewTests(unittest.TestCase):
         self.assertEqual(len(phy_colors), 1)
         self.assertEqual(len(mat_colors), 1)
         self.assertNotEqual(phy_colors, mat_colors)
-        self.assertEqual(view.legend[0].label, "PHY Physics:GPHY")
-        self.assertEqual(view.legend[1].label, "MAT Mathematics:GMAT")
+        self.assertEqual(view.legend[0].label, "PHY Physics:GPHY (CODHORA: 801)")
+        self.assertEqual(view.legend[1].label, "MAT Mathematics:GMAT (CODHORA: 800)")
 
     def test_build_schedule_calendar_view_block_labels_include_session_details(self) -> None:
         view = build_schedule_calendar_view(
@@ -114,6 +126,7 @@ class CalendarViewTests(unittest.TestCase):
                         )
                     ],
                     subject_name="Chemistry",
+                    hour_code="902",
                 )
             ),
         )
@@ -123,7 +136,7 @@ class CalendarViewTests(unittest.TestCase):
             block.label_lines,
             (
                 "CHEM Chemistry",
-                "Group: GCHEM",
+                "Group: GCHEM | CODHORA: 902",
                 "Laboratory (L)",
                 "09:00-10:30",
                 "Classroom: VVIRT",
@@ -155,6 +168,7 @@ class CalendarViewTests(unittest.TestCase):
         sessions: list[SessionRecord],
         *,
         subject_name: str = "",
+        hour_code: str = "",
     ) -> CandidateEnrollment:
         return CandidateEnrollment(
             group_code=group_code,
@@ -162,6 +176,7 @@ class CalendarViewTests(unittest.TestCase):
             province="PANAMÁ",
             sessions=sessions,
             subject_name=subject_name,
+            hour_code=hour_code,
         )
 
     @staticmethod

@@ -33,6 +33,8 @@ DEFAULT_HEADERS = {
 @dataclass(slots=True)
 class GroupListing:
     event_target: str
+    group_code: str
+    hour_code: str
 
 
 @dataclass(slots=True)
@@ -142,7 +144,13 @@ def parse_group_rows(html: str) -> list[GroupListing]:
         parts = href.split("'")
         if len(parts) < 2:
             continue
-        groups.append(GroupListing(event_target=parts[1]))
+        groups.append(
+            GroupListing(
+                event_target=parts[1],
+                group_code=columns[2].get_text(strip=True),
+                hour_code=columns[3].get_text(strip=True),
+            )
+        )
     return groups
 
 
@@ -384,7 +392,11 @@ class UTPPortalClient:
             data=detail_payload,
             headers={"Referer": referer_url},
         )
-        return parse_group_detail_html(detail_response.text)
+        scraped_group = parse_group_detail_html(detail_response.text)
+        if listing.group_code and not scraped_group.header.group_code:
+            scraped_group.header.group_code = listing.group_code
+        scraped_group.header.hour_code = listing.hour_code
+        return scraped_group
 
     def _clone_worker_session(self) -> requests.Session:
         worker_session = requests.Session()

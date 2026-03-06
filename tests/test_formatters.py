@@ -4,8 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from schedule_calculator.domain.models import CandidateEnrollment, SessionRecord
 from schedule_calculator.errors import ValidationError
-from schedule_calculator.formatters import read_scraped_groups
+from schedule_calculator.formatters import format_enrollment_label, read_scraped_groups
 
 
 class FormatterTests(unittest.TestCase):
@@ -34,6 +35,31 @@ class FormatterTests(unittest.TestCase):
                 read_scraped_groups(payload_path)
 
             self.assertEqual(str(context.exception), "Group entry #1 is malformed.")
+
+    def test_format_enrollment_label_includes_codhora_and_lab(self) -> None:
+        enrollment = CandidateEnrollment(
+            group_code="1SF242",
+            subject_id="0698",
+            province="PANAMÁ",
+            sessions=[
+                SessionRecord(
+                    day="MONDAY",
+                    subject="",
+                    session_type="Laboratory",
+                    classroom="VVIRT",
+                    lab_code="L",
+                )
+            ],
+            subject_name="GEST. INFORM.",
+            hour_code="742",
+        )
+
+        label = format_enrollment_label(enrollment, include_subject_name=True)
+
+        self.assertEqual(
+            label,
+            "0698 GEST. INFORM.:1SF242 (CODHORA: 742, Lab: L)",
+        )
 
 
 if __name__ == "__main__":

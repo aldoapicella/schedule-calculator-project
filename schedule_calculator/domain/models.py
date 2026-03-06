@@ -38,6 +38,7 @@ class PortalSessionState:
 @dataclass(slots=True)
 class GroupHeader:
     group_code: str = ""
+    hour_code: str = ""
     province: str = ""
     faculty: str = ""
     year: str = ""
@@ -48,6 +49,7 @@ class GroupHeader:
         payload = payload or {}
         return cls(
             group_code=str(payload.get("group_code", "")).strip(),
+            hour_code=str(payload.get("hour_code", "")).strip(),
             province=str(payload.get("province", "")).strip(),
             faculty=str(payload.get("faculty", "")).strip(),
             year=str(payload.get("year", "")).strip(),
@@ -57,6 +59,7 @@ class GroupHeader:
     def to_dict(self) -> dict[str, str]:
         return {
             "group_code": self.group_code,
+            "hour_code": self.hour_code,
             "province": self.province,
             "faculty": self.faculty,
             "year": self.year,
@@ -165,6 +168,7 @@ class CourseGroup:
     province: str
     sessions: list[SessionRecord]
     subject_name: str = ""
+    hour_code: str = ""
 
 
 @dataclass(slots=True)
@@ -174,6 +178,7 @@ class CandidateEnrollment:
     province: str
     sessions: list[SessionRecord]
     subject_name: str = ""
+    hour_code: str = ""
 
 
 @dataclass(slots=True)

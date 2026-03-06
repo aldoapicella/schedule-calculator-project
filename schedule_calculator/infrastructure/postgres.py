@@ -35,11 +35,13 @@ def postgres_connection(config: DatabaseConfig) -> Iterator[object]:
 class PostgresGroupCatalogRepository:
     def __init__(self, connection) -> None:
         self.connection = connection
+        _ensure_course_group_hour_code_column(connection)
 
     def list_groups_for_subject(self, subject_id: str) -> list[CourseGroup]:
         query = """
         SELECT cg.group_code,
                cg.province,
+               COALESCE(cg.hour_code, ''),
                subj.name,
                cc.session_type,
                cc.lab_code,
@@ -69,6 +71,7 @@ class PostgresGroupCatalogRepository:
             (
                 group_code,
                 province,
+                hour_code,
                 subject_name,
                 session_type,
                 lab_code,
@@ -84,6 +87,7 @@ class PostgresGroupCatalogRepository:
                     province=province,
                     sessions=[],
                     subject_name=subject_name or "",
+                    hour_code=hour_code or "",
                 )
             groups[group_code].sessions.append(
                 SessionRecord(
@@ -102,6 +106,30 @@ class PostgresGroupCatalogRepository:
 class PostgresGroupPersistenceRepository:
     def __init__(self, connection) -> None:
         self.connection = connection
+        _ensure_course_group_hour_code_column(connection)
+
+    def sync_existing_group_metadata(self, group: ScrapedGroup) -> None:
+        try:
+            with self.connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE course_group
+                    SET province = %s,
+                        hour_code = COALESCE(NULLIF(%s, ''), hour_code)
+                    WHERE group_code = %s
+                    """,
+                    (
+                        group.header.province,
+                        group.header.hour_code,
+                        group.header.group_code,
+                    ),
+                )
+            self.connection.commit()
+        except Exception as exc:
+            self.connection.rollback()
+            raise PersistenceError(
+                f"Failed to sync group metadata for {group.header.group_code}."
+            ) from exc
 
     def is_group_processed(self, group_code: str) -> bool:
         try:
@@ -119,8 +147,16 @@ class PostgresGroupPersistenceRepository:
             with self.connection.cursor() as cursor:
                 faculty_id = self._get_or_create_faculty(cursor, group.header.faculty)
                 cursor.execute(
-                    "INSERT INTO course_group (group_code, province, id_faculty) VALUES (%s, %s, %s)",
-                    (group.header.group_code, group.header.province, faculty_id),
+                    """
+                    INSERT INTO course_group (group_code, province, hour_code, id_faculty)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        group.header.group_code,
+                        group.header.province,
+                        group.header.hour_code or None,
+                        faculty_id,
+                    ),
                 )
 
                 subject_mapping = self._build_subject_mapping(cursor, group)
@@ -267,3 +303,15 @@ class PostgresGroupPersistenceRepository:
             (day, start_time, end_time),
         )
         return cursor.fetchone()[0]
+
+
+def _ensure_course_group_hour_code_column(connection) -> None:
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE course_group ADD COLUMN IF NOT EXISTS hour_code VARCHAR(32)"
+            )
+        connection.commit()
+    except Exception as exc:
+        connection.rollback()
+        raise PersistenceError("Failed to ensure course_group.hour_code exists.") from exc

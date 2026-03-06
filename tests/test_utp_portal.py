@@ -62,10 +62,10 @@ class PortalParserTests(unittest.TestCase):
         rows = parse_group_rows(read_fixture("portal_group_rows.html"))
 
         self.assertEqual(
-            [row.event_target for row in rows],
+            [(row.event_target, row.group_code, row.hour_code) for row in rows],
             [
-                "ctl00$cphContenido$gvlistado$ctl02$lnkHorario",
-                "ctl00$cphContenido$gvlistado$ctl03$lnkHorario",
+                ("ctl00$cphContenido$gvlistado$ctl02$lnkHorario", "1IL131", "100"),
+                ("ctl00$cphContenido$gvlistado$ctl03$lnkHorario", "1IL132", "200"),
             ],
         )
 
@@ -217,6 +217,7 @@ class PortalParserTests(unittest.TestCase):
             [group.header.group_code for group in groups],
             ["GROUPA", "GROUPB"],
         )
+        self.assertEqual([group.header.hour_code for group in groups], ["100", "200"])
 
     def test_parallel_detail_fetch_bubbles_failure_without_returning_partial_results(self) -> None:
         session = FakeSession(
@@ -319,8 +320,22 @@ class PortalParserTests(unittest.TestCase):
 
     def _group_rows_page_html(self, event_targets: list[str]) -> str:
         rows = []
-        for event_target in event_targets:
-            columns = "".join("<td>value</td>" for _ in range(9))
+        for index, event_target in enumerate(event_targets, start=1):
+            group_code = f"GROUP{chr(64 + index)}"
+            hour_code = f"{index}00"
+            columns = "".join(
+                [
+                    "<td>PANAMÁ</td>",
+                    "<td>Ingeniería</td>",
+                    f"<td>{group_code}</td>",
+                    f"<td>{hour_code}</td>",
+                    "<td>A</td>",
+                    "<td>No</td>",
+                    "<td>Si</td>",
+                    "<td>No</td>",
+                    "<td>No</td>",
+                ]
+            )
             columns += (
                 f"<td><a href=\"javascript:__doPostBack('{event_target}','')\">Horario</a></td>"
             )

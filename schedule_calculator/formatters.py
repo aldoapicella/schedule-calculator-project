@@ -73,9 +73,11 @@ def format_enrollment_label(
     subject_label = enrollment.subject_id
     if include_subject_name and enrollment.subject_name:
         subject_label = f"{enrollment.subject_id} {enrollment.subject_name}"
+    details: list[str] = []
+    if enrollment.hour_code:
+        details.append(f"CODHORA: {enrollment.hour_code}")
     if lab_codes:
-        return (
-            f"{subject_label}:{enrollment.group_code} "
-            f"(Lab: {', '.join(sorted(lab_codes))})"
-        )
+        details.append(f"Lab: {', '.join(sorted(lab_codes))}")
+    if details:
+        return f"{subject_label}:{enrollment.group_code} ({', '.join(details)})"
     return f"{subject_label}:{enrollment.group_code}"

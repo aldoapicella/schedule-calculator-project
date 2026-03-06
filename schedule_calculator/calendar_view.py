@@ -51,6 +51,7 @@ class CalendarLegendItem:
     subject_id: str
     subject_name: str
     group_code: str
+    hour_code: str
     color_hex: str
     label: str
 
@@ -61,6 +62,7 @@ class CalendarBlock:
     subject_id: str
     subject_name: str
     group_code: str
+    hour_code: str
     session_type: str
     classroom: str
     lab_code: str | None
@@ -116,6 +118,7 @@ def build_schedule_calendar_view(
                 subject_id=enrollment.subject_id,
                 subject_name=enrollment.subject_name,
                 group_code=enrollment.group_code,
+                hour_code=enrollment.hour_code,
                 color_hex=color_hex,
                 label=format_enrollment_label(enrollment, include_subject_name=True),
             )
@@ -128,6 +131,7 @@ def build_schedule_calendar_view(
                     subject_id=enrollment.subject_id,
                     subject_name=enrollment.subject_name,
                     group_code=enrollment.group_code,
+                    hour_code=enrollment.hour_code,
                     session_type=session.session_type,
                     classroom=session.classroom,
                     lab_code=session.lab_code,
@@ -140,6 +144,7 @@ def build_schedule_calendar_view(
                         enrollment.subject_id,
                         enrollment.subject_name,
                         enrollment.group_code,
+                        enrollment.hour_code,
                         session.session_type,
                         session.classroom,
                         session.lab_code,
@@ -205,6 +210,7 @@ def _build_block_label_lines(
     subject_id: str,
     subject_name: str,
     group_code: str,
+    hour_code: str,
     session_type: str,
     classroom: str,
     lab_code: str | None,
@@ -215,9 +221,12 @@ def _build_block_label_lines(
     if lab_code:
         session_label = f"{session_label} ({lab_code})"
     subject_line = subject_id if not subject_name else f"{subject_id} {subject_name}"
+    group_line = f"Group: {group_code}"
+    if hour_code:
+        group_line = f"{group_line} | CODHORA: {hour_code}"
     return (
         subject_line,
-        f"Group: {group_code}",
+        group_line,
         session_label,
         f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}",
         f"Classroom: {classroom or 'TBD'}",

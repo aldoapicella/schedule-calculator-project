@@ -15,6 +15,9 @@ class GroupCatalogRepository(Protocol):
 
 
 class GroupPersistenceRepository(Protocol):
+    def sync_existing_group_metadata(self, group: ScrapedGroup) -> None:
+        ...
+
     def is_group_processed(self, group_code: str) -> bool:
         ...
 
@@ -28,4 +31,3 @@ class PortalClient(Protocol):
 
     def fetch_groups_for_subject(self, subject_id: str) -> list[ScrapedGroup]:
         ...
-

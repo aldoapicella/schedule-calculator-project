@@ -204,6 +204,7 @@ def split_group_enrollments(group: CourseGroup) -> list[CandidateEnrollment]:
                 province=group.province,
                 sessions=list(group.sessions),
                 subject_name=group.subject_name,
+                hour_code=group.hour_code,
             )
         ]
     if not theory_sessions:
@@ -223,6 +224,7 @@ def split_group_enrollments(group: CourseGroup) -> list[CandidateEnrollment]:
                 province=group.province,
                 sessions=theory_sessions + labs,
                 subject_name=group.subject_name,
+                hour_code=group.hour_code,
             )
         )
     return enrollments

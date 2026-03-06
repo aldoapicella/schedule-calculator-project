@@ -32,6 +32,7 @@ class ImportService:
             group_code = group.header.group_code or "<missing-group-code>"
             try:
                 self._validate_group(group)
+                self.repository.sync_existing_group_metadata(group)
                 if self.repository.is_group_processed(group.header.group_code):
                     result.skipped_count += 1
                     self.logger.info("Group %s already processed. Skipping.", group.header.group_code)

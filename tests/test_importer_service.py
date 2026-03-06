@@ -17,6 +17,10 @@ class FakePersistenceRepository:
         self.raise_on_persist = raise_on_persist
         self.persisted: list[ScrapedGroup] = []
         self.checked_group_codes: list[str] = []
+        self.synced_group_codes: list[str] = []
+
+    def sync_existing_group_metadata(self, group: ScrapedGroup) -> None:
+        self.synced_group_codes.append(group.header.group_code)
 
     def is_group_processed(self, group_code: str) -> bool:
         self.checked_group_codes.append(group_code)
@@ -104,6 +108,7 @@ class ImportServiceTests(unittest.TestCase):
 
         self.assertEqual(result.skipped_count, 1)
         self.assertEqual(result.processed_count, 0)
+        self.assertEqual(repository.synced_group_codes, ["G1"])
         self.assertEqual(repository.checked_group_codes, ["G1"])
         self.assertEqual(repository.persisted, [])
 
