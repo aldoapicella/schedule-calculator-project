@@ -11,7 +11,7 @@ Typical flow:
 ```bash
 cp .env.example.host .env
 docker compose up -d
-python scrape_utp.py --subject-ids 0698,0709
+python scrape_utp.py --subject-ids 0698,0709 --group-concurrency 6
 python data_extractor/inserter.py --input artifacts/scraped_groups.json
 python data_extractor/calculator.py --subjects 0698,0709 --available-start 17:00 --available-end 23:00 --province PANAMÁ
 ```
@@ -49,6 +49,7 @@ Logging:
 - default: concise INFO/WARN logging to stderr
 - `--verbose`: enables DEBUG logging
 - `--log-file`: writes logs to an explicit file path
+- scraper `--group-concurrency`: fetches group detail pages in parallel per subject, default `6`
 
 ## Failure Modes
 
@@ -114,3 +115,4 @@ Action:
 - The scheduler preserves the current business rules: out-of-province groups are allowed only when fully virtual, lab groups require theory, and the best solution still requires at least two enrollments.
 - The scheduler now optimizes search order internally by exploring subjects with fewer candidate enrollments first, but the final output preserves the original user subject order.
 - The portal adapter retries transient request failures with small backoff before surfacing a request error.
+- The scraper keeps subjects sequential for portal stability, but group detail pages within each subject are fetched with bounded parallelism to reduce live scrape time without changing output order.

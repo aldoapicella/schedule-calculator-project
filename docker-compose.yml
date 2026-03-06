@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres
+    image: postgres:17
     container_name: schedule-maker-postgres
     env_file:
       - .env

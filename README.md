@@ -45,7 +45,7 @@ Host mode is for running the Python scripts directly on your machine. Docker mod
 Scrape subjects into a JSON artifact:
 
 ```bash
-python scrape_utp.py --subject-ids 0698,0709
+python scrape_utp.py --subject-ids 0698,0709 --group-concurrency 6
 ```
 
 Import a scraped payload into Postgres:
@@ -70,6 +70,8 @@ All entrypoints support:
 - `--env-file <path>` to override the default `.env`
 - `--log-file <path>` to write logs to a file explicitly
 - `--verbose` to enable debug logging
+
+The scraper also supports `--group-concurrency <int>` to fetch group detail pages in parallel per subject. The default is `6`, which keeps subject traversal stable while removing the main serial bottleneck.
 
 By default, generated scraper output goes to `artifacts/scraped_groups.json`. No log file is created unless `--log-file` is passed.
 

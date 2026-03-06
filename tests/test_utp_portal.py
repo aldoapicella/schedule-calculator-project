@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import requests
 
@@ -168,11 +170,201 @@ class PortalParserTests(unittest.TestCase):
         )
         self.assertNotIn("ticket=secret", str(context.exception))
 
+    def test_fetch_groups_for_subject_preserves_listing_order_with_parallel_detail_fetches(self) -> None:
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(
+                    self._selection_page_html(),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+            post_responses=[
+                FakeResponse(
+                    self._group_rows_page_html(
+                        [
+                            "ctl00$cphContenido$gvlistado$ctl02$lnkHorario",
+                            "ctl00$cphContenido$gvlistado$ctl03$lnkHorario",
+                        ]
+                    ),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+        )
+        worker_sessions = [
+            WorkerSession(
+                post_responses=[FakeResponse(self._detail_html("GROUPA"))],
+                delay_seconds=0.15,
+            ),
+            WorkerSession(
+                post_responses=[FakeResponse(self._detail_html("GROUPB"))],
+            ),
+        ]
+        client = UTPPortalClient(
+            base_url="https://matricula.utp.ac.pa/",
+            session=session,
+            group_concurrency=2,
+        )
+        client.menu_url = "https://matricula.utp.ac.pa/mprematr/menu/inicio/2026/token"
+        client.group_list_url = "https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token"
+
+        with mock.patch(
+            "schedule_calculator.infrastructure.utp_portal.requests.Session",
+            side_effect=worker_sessions,
+        ):
+            groups = client.fetch_groups_for_subject("0698")
+
+        self.assertEqual(
+            [group.header.group_code for group in groups],
+            ["GROUPA", "GROUPB"],
+        )
+
+    def test_parallel_detail_fetch_bubbles_failure_without_returning_partial_results(self) -> None:
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(
+                    self._selection_page_html(),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+            post_responses=[
+                FakeResponse(
+                    self._group_rows_page_html(
+                        [
+                            "ctl00$cphContenido$gvlistado$ctl02$lnkHorario",
+                            "ctl00$cphContenido$gvlistado$ctl03$lnkHorario",
+                        ]
+                    ),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+        )
+        worker_sessions = [
+            WorkerSession(
+                post_responses=[
+                    FakeResponse("", raise_for_status_error=requests.HTTPError("boom"))
+                ]
+            ),
+            WorkerSession(
+                post_responses=[FakeResponse(self._detail_html("GROUPB"))],
+                delay_seconds=0.1,
+            ),
+        ]
+        client = UTPPortalClient(
+            base_url="https://matricula.utp.ac.pa/",
+            session=session,
+            group_concurrency=2,
+            max_attempts=1,
+        )
+        client.menu_url = "https://matricula.utp.ac.pa/mprematr/menu/inicio/2026/token"
+        client.group_list_url = "https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token"
+
+        with mock.patch(
+            "schedule_calculator.infrastructure.utp_portal.requests.Session",
+            side_effect=worker_sessions,
+        ):
+            with self.assertRaises(PortalRequestError):
+                client.fetch_groups_for_subject("0698")
+
+    def test_worker_sessions_inherit_authenticated_headers_and_cookies(self) -> None:
+        session = FakeSession(
+            get_responses=[
+                FakeResponse(
+                    self._selection_page_html(),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+            post_responses=[
+                FakeResponse(
+                    self._group_rows_page_html(
+                        ["ctl00$cphContenido$gvlistado$ctl02$lnkHorario"]
+                    ),
+                    url="https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token",
+                )
+            ],
+            cookies={"ASP.NET_SessionId": "session-cookie"},
+            default_headers={"X-Test": "present"},
+        )
+        worker_session = WorkerSession(
+            post_responses=[FakeResponse(self._detail_html("GROUPA"))]
+        )
+        client = UTPPortalClient(
+            base_url="https://matricula.utp.ac.pa/",
+            session=session,
+            group_concurrency=1,
+        )
+        client.menu_url = "https://matricula.utp.ac.pa/mprematr/menu/inicio/2026/token"
+        client.group_list_url = "https://matricula.utp.ac.pa/clistagrupo/menu/procesos/2026/token"
+
+        with mock.patch(
+            "schedule_calculator.infrastructure.utp_portal.requests.Session",
+            return_value=worker_session,
+        ):
+            client.fetch_groups_for_subject("0698")
+
+        self.assertEqual(worker_session.headers.get("X-Test"), "present")
+        self.assertEqual(worker_session.cookies.get("ASP.NET_SessionId"), "session-cookie")
+
+    def _selection_page_html(self) -> str:
+        return """
+        <html>
+          <body>
+            <form id="frmMaster" action="./selection-token">
+              <input type="hidden" name="__VIEWSTATE" value="selection-viewstate" />
+              <input type="hidden" name="__EVENTVALIDATION" value="selection-eventvalidation" />
+              <input type="hidden" name="__VIEWSTATEGENERATOR" value="selection-generator" />
+            </form>
+          </body>
+        </html>
+        """
+
+    def _group_rows_page_html(self, event_targets: list[str]) -> str:
+        rows = []
+        for event_target in event_targets:
+            columns = "".join("<td>value</td>" for _ in range(9))
+            columns += (
+                f"<td><a href=\"javascript:__doPostBack('{event_target}','')\">Horario</a></td>"
+            )
+            rows.append(f"<tr>{columns}</tr>")
+        return (
+            """
+            <html>
+              <body>
+                <form id="frmMaster" action="./groups-token">
+                  <input type="hidden" name="__VIEWSTATE" value="groups-viewstate" />
+                  <input type="hidden" name="__EVENTVALIDATION" value="groups-eventvalidation" />
+                  <input type="hidden" name="__VIEWSTATEGENERATOR" value="groups-generator" />
+                </form>
+                <table id="cphContenido_gvlistado">
+                  <tr>
+                    <th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>
+                    <th>6</th><th>7</th><th>8</th><th>9</th><th>10</th>
+                  </tr>
+            """
+            + "".join(rows)
+            + """
+                </table>
+              </body>
+            </html>
+            """
+        )
+
+    def _detail_html(self, group_code: str) -> str:
+        return read_fixture("portal_group_detail.html").replace(
+            "PANAMÁ - 1IL131",
+            f"PANAMÁ - {group_code}",
+        )
+
 
 class FakeResponse:
-    def __init__(self, text: str, raise_for_status_error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        text: str,
+        raise_for_status_error: Exception | None = None,
+        url: str = "https://matricula.utp.ac.pa/",
+    ) -> None:
         self.text = text
         self._raise_for_status_error = raise_for_status_error
+        self.url = url
 
     def raise_for_status(self) -> None:
         if self._raise_for_status_error is not None:
@@ -185,24 +377,76 @@ class FakeSession:
         *,
         get_responses: list[FakeResponse] | None = None,
         post_responses: list[FakeResponse] | None = None,
+        cookies: dict[str, str] | None = None,
+        default_headers: dict[str, str] | None = None,
     ) -> None:
         self.get_responses = get_responses or []
         self.post_responses = post_responses or []
         self.headers: dict[str, str] = {}
-        self.get_calls: list[tuple[str, int | None]] = []
-        self.post_calls: list[tuple[str, dict[str, str], int | None]] = []
+        self.cookies = requests.cookies.RequestsCookieJar()
+        for key, value in (cookies or {}).items():
+            self.cookies.set(key, value)
+        self.auth = None
+        self.proxies: dict[str, str] = {}
+        self.verify = True
+        self.cert = None
+        self.stream = False
+        self.trust_env = True
+        self.max_redirects = 30
+        self.hooks: dict[str, list] = {}
+        self.get_calls: list[tuple[str, int | None, dict[str, str] | None]] = []
+        self.post_calls: list[tuple[str, dict[str, str], int | None, dict[str, str] | None]] = []
+        if default_headers:
+            self.headers.update(default_headers)
 
-    def get(self, url: str, timeout: int | None = None) -> FakeResponse:
-        self.get_calls.append((url, timeout))
+    def get(
+        self,
+        url: str,
+        timeout: int | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
+        self.get_calls.append((url, timeout, headers))
         if not self.get_responses:
             raise AssertionError("Unexpected GET call")
         return self.get_responses.pop(0)
 
-    def post(self, url: str, data: dict[str, str], timeout: int | None = None) -> FakeResponse:
-        self.post_calls.append((url, data, timeout))
+    def post(
+        self,
+        url: str,
+        data: dict[str, str],
+        timeout: int | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
+        self.post_calls.append((url, data, timeout, headers))
         if not self.post_responses:
             raise AssertionError("Unexpected POST call")
         return self.post_responses.pop(0)
+
+    def close(self) -> None:
+        return None
+
+
+class WorkerSession(FakeSession):
+    def __init__(
+        self,
+        *,
+        get_responses: list[FakeResponse] | None = None,
+        post_responses: list[FakeResponse] | None = None,
+        delay_seconds: float = 0.0,
+    ) -> None:
+        super().__init__(get_responses=get_responses, post_responses=post_responses)
+        self.delay_seconds = delay_seconds
+
+    def post(
+        self,
+        url: str,
+        data: dict[str, str],
+        timeout: int | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
+        if self.delay_seconds > 0:
+            time.sleep(self.delay_seconds)
+        return super().post(url, data, timeout=timeout, headers=headers)
 
 
 if __name__ == "__main__":

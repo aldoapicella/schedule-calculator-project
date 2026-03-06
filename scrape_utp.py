@@ -15,6 +15,13 @@ from schedule_calculator.infrastructure.logging import configure_logging, log_ex
 from schedule_calculator.infrastructure.utp_portal import UTPPortalClient
 
 
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("group concurrency must be at least 1")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Scrape UTP schedule data by subject.")
     parser.add_argument(
@@ -42,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable verbose debug logging.",
     )
+    parser.add_argument(
+        "--group-concurrency",
+        type=_positive_int,
+        default=6,
+        help="Parallel detail-page workers per subject.",
+    )
     return parser
 
 
@@ -59,7 +72,11 @@ def main(argv: list[str] | None = None) -> int:
         if not subject_ids:
             raise ValueError("At least one subject ID is required.")
 
-        client = UTPPortalClient(base_url=base_url, logger=logger)
+        client = UTPPortalClient(
+            base_url=base_url,
+            logger=logger,
+            group_concurrency=args.group_concurrency,
+        )
         service = ScraperService(client, logger=logger)
         groups = service.scrape_subjects(subject_ids, credentials)
         write_scraped_groups(groups, args.output)
